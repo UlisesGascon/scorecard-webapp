@@ -21,6 +21,8 @@ jobs:
     steps:
     - name: Checkout hosting repo
       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+      with:
+        path: .
 
     - name: Ensure last synced file exists
       run: |
@@ -66,27 +68,27 @@ jobs:
         repository: ossf/scorecard-visualizer
         ref: main
         path: react-source
+        working-directory: .
 
     - name: Setup Node
       uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 #v5
       with:
         node-version: 20.9.0
+        working-directory: .
 
     - name: Install dependencies
-      run: |
-        cd react-source
-        npm ci
+      run: npm ci
+      working-directory: react-source
 
     - name: Build React project
-      run: |
-        cd react-source
-        npm run build
+      run: npm run build
+      working-directory: react-source
 
     # --- Copy Files to Static Folder ---
     - name: Replace static folder
       run: |
-        rm -rf .
-        cp -r react-source/build/* .
+        rm -rf ./*
+        cp -r ../../../react-source/build/* .
 
     - name: Update stored SHA
       run: echo "${{ steps.latest.outputs.sha }}" > .last_commit
@@ -97,20 +99,38 @@ jobs:
         git diff
 
     - name: Commit Changes
+      working-directory: .
       run: |
+        git rm -r --cached react-source 2>/dev/null || true
         git config user.name "GitHub Actions"
         git config user.email "actions@github.com"
-        git add -A
+        git checkout -B deps/upgrade-visualizer
+        git add scorecards-site/static/visualizer
         git diff --cached --quiet || git commit -m "deps: update visualizer to commit ${{ steps.latest.outputs.sha }}"
+        git fetch origin deps/upgrade-visualizer || true
+        git push -u origin deps/upgrade-visualizer --force-with-lease
 
     # --- Create PR ---
+
+    - name: Check if PR exists
+      id: check_pr
+      run: |
+        if gh pr view deps/upgrade-visualizer --json number > /dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Create and Assign Pull Request
+      if: steps.check_pr.outputs.exists == 'false'
       run: |
         gh pr create \
           --base main \
-          --head chore/update-content \
+          --head deps/upgrade-visualizer \
           --title "[AUTO] Update visualizer" \
-          --body "This PR updates the Scorecard Visualizer to commit **${{ steps.latest.outputs.sha }}**." \
+          --body "This PR updates the Scorecard Visualizer to commit [**${{ steps.latest.outputs.sha }}**](https://github.com/ossf/scorecard-visualizer/commit/${{ steps.latest.outputs.sha }})." \
           --assignee "${{ github.actor }}" \
           --reviewer "${{ github.actor }}"
       env:
